@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>What Color Is This?</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Hidden video element receives the camera stream -->
+  <video id="video" autoplay playsinline muted></video>
+
+  <!-- Main canvas: camera frame + bounding box overlay are drawn here -->
+  <canvas id="canvas"></canvas>
+
+  <!-- Color result panel — hidden until a region is detected -->
+  <div id="result" class="result hidden">
+    <div id="swatch" class="swatch"></div>
+    <span id="colorName" class="color-name"></span>
+  </div>
+
+  <!-- Settings panel (bottom of screen) -->
+  <div id="settings" class="settings">
+    <label>
+      Brightness <span id="threshVal">180</span>
+      <input type="range" id="threshSlider" min="100" max="255" value="180" />
+    </label>
+    <label>
+      Min area <span id="areaVal">150</span>px²
+      <input type="range" id="areaSlider" min="20" max="2000" value="150" />
+    </label>
+    <button id="toggleSettings" class="toggle-btn" aria-label="Hide settings">▲ Hide</button>
+  </div>
+  <button id="showSettings" class="show-btn hidden" aria-label="Show settings">⚙</button>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
