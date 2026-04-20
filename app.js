@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants & tunable defaults
 // ─────────────────────────────────────────────────────────────────────────────
-const APP_VERSION = 'v1.2';
+const APP_VERSION = 'v1.3';
 const FRAME_INTERVAL_MS = 100;     // how often to process a frame
 // A region's average brightness (max of R,G,B averaged across pixels) must
 // exceed this fraction of the pixel-entry threshold to be considered "on".
@@ -24,12 +24,41 @@ const areaVal      = document.getElementById('areaVal');
 const toggleBtn    = document.getElementById('toggleSettings');
 const showBtn      = document.getElementById('showSettings');
 const settingsPanel = document.getElementById('settings');
+const zoomBadge    = document.getElementById('zoomBadge');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Settings state
 // ─────────────────────────────────────────────────────────────────────────────
 let brightnessThreshold = parseInt(threshSlider.value, 10);
 let minAreaPx           = parseInt(areaSlider.value, 10);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Zoom state
+// ─────────────────────────────────────────────────────────────────────────────
+let zoomLevel        = 1.0;
+const ZOOM_MIN       = 1.0;
+const ZOOM_MAX       = 8.0;
+let nativeZoomMin    = 1.0;
+let nativeZoomMax    = 1.0;   // stays 1.0 if not supported
+let videoTrack       = null;  // set after camera starts
+
+function applyZoom(newZoom) {
+  zoomLevel = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newZoom));
+
+  // Try native zoom first (better quality on supported devices)
+  if (videoTrack && nativeZoomMax > 1.0) {
+    const clampedNative = Math.max(nativeZoomMin, Math.min(nativeZoomMax, zoomLevel));
+    videoTrack.applyConstraints({ advanced: [{ zoom: clampedNative }] }).catch(() => {});
+  }
+
+  // Update badge
+  if (zoomLevel > 1.05) {
+    zoomBadge.textContent = zoomLevel.toFixed(1) + '\u00d7';
+    zoomBadge.classList.remove('hidden');
+  } else {
+    zoomBadge.classList.add('hidden');
+  }
+}
 
 threshSlider.addEventListener('input', () => {
   brightnessThreshold = parseInt(threshSlider.value, 10);
@@ -52,6 +81,47 @@ showBtn.addEventListener('click', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Pinch-to-zoom and double-tap-to-reset gesture handling
+// ─────────────────────────────────────────────────────────────────────────────
+let pinchStartDist  = null;
+let pinchStartZoom  = 1.0;
+let lastTapTime     = 0;
+
+function getTouchDist(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
+}
+
+canvas.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 2) {
+    e.preventDefault();
+    pinchStartDist = getTouchDist(e.touches);
+    pinchStartZoom = zoomLevel;
+  } else if (e.touches.length === 1) {
+    // Double-tap detection
+    const now = Date.now();
+    if (now - lastTapTime < 300) {
+      applyZoom(1.0);
+    }
+    lastTapTime = now;
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+  if (e.touches.length === 2 && pinchStartDist !== null) {
+    e.preventDefault();
+    const dist  = getTouchDist(e.touches);
+    const ratio = dist / pinchStartDist;
+    applyZoom(pinchStartZoom * ratio);
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', () => {
+  if (pinchStartDist !== null) pinchStartDist = null;
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Camera initialisation
 // ─────────────────────────────────────────────────────────────────────────────
 async function startCamera() {
@@ -66,6 +136,16 @@ async function startCamera() {
       const stream = await navigator.mediaDevices.getUserMedia(constraint);
       video.srcObject = stream;
       await video.play();
+
+      // Check for native zoom support
+      videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+        if (caps.zoom) {
+          nativeZoomMin = caps.zoom.min ?? 1.0;
+          nativeZoomMax = caps.zoom.max ?? 1.0;
+        }
+      }
       return;
     } catch (_) {
       // try next constraint
@@ -241,8 +321,15 @@ function processFrame() {
     canvas.height = vh;
   }
 
-  // Draw current video frame to offscreen for pixel analysis
-  offCtx.drawImage(video, 0, 0, vw, vh);
+  // Compute source crop rectangle for the current zoom level
+  // (used for both digital zoom fallback and bounding-box coordinate space)
+  const cropW = vw / zoomLevel;
+  const cropH = vh / zoomLevel;
+  const cropX = (vw - cropW) / 2;
+  const cropY = (vh - cropH) / 2;
+
+  // Draw the zoomed crop to offscreen at full canvas resolution for analysis
+  offCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, vw, vh);
   const imageData = offCtx.getImageData(0, 0, vw, vh);
 
   // Find bright connected regions
@@ -254,8 +341,8 @@ function processFrame() {
     ? candidates.reduce((a, b) => (a.pixels > b.pixels ? a : b))
     : null;
 
-  // Draw the camera frame onto the visible canvas
-  ctx.drawImage(video, 0, 0, vw, vh);
+  // Draw the same zoomed crop to the visible canvas
+  ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, vw, vh);
 
   if (best) {
     const avgR = best.sumR / best.pixels;
@@ -266,7 +353,6 @@ function processFrame() {
     // these are likely the unlit LED strip reflecting ambient light.
     const avgBrightness = Math.max(avgR, avgG, avgB);
     if (avgBrightness < brightnessThreshold * REGION_AVG_BRIGHTNESS_RATIO) {
-      ctx.drawImage(video, 0, 0, vw, vh);
       resultPanel.classList.add('hidden');
       return;
     }

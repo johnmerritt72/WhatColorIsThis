@@ -24,7 +24,23 @@ video {
   height: 100%;
   object-fit: cover;
 }
-
+/* ── Zoom badge ─────────────────────────────────────────────── */
+.zoom-badge {
+  position: fixed;
+  top: 24px;
+  right: 16px;
+  background: rgba(0, 0, 0, 0.60);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 10;
+  letter-spacing: 0.5px;
+}
 /* ── Color result panel ─────────────────────────────────── */
 .result {
   position: fixed;
@@ -128,11 +144,13 @@ video {
 .version-label {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.4);
-  margin-left: auto;
+  margin-left: 0;
   align-self: flex-end;
   padding-bottom: 2px;
   white-space: nowrap;
   user-select: none;
+  order: 99;
+  width: 100%;
 }
 
 .show-btn.hidden,

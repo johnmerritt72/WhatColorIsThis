@@ -13,6 +13,9 @@
   <!-- Main canvas: camera frame + bounding box overlay are drawn here -->
   <canvas id="canvas"></canvas>
 
+  <!-- Zoom level badge — visible only when zoomed in -->
+  <div id="zoomBadge" class="zoom-badge hidden"></div>
+
   <!-- Color result panel — hidden until a region is detected -->
   <div id="result" class="result hidden">
     <div id="swatch" class="swatch"></div>
@@ -22,8 +25,8 @@
   <!-- Settings panel (bottom of screen) -->
   <div id="settings" class="settings">
     <label>
-      Brightness <span id="threshVal">180</span>
-      <input type="range" id="threshSlider" min="100" max="255" value="180" />
+      Brightness <span id="threshVal">255</span>
+      <input type="range" id="threshSlider" min="100" max="255" value="255" />
     </label>
     <label>
       Min area <span id="areaVal">150</span>px²
