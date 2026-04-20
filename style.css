@@ -125,6 +125,16 @@ video {
   z-index: 20;
 }
 
+.version-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-left: auto;
+  align-self: flex-end;
+  padding-bottom: 2px;
+  white-space: nowrap;
+  user-select: none;
+}
+
 .show-btn.hidden,
 .result.hidden {
   display: none;
