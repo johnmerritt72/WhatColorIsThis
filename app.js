@@ -1,7 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants & tunable defaults
 // ─────────────────────────────────────────────────────────────────────────────
-const FRAME_INTERVAL_MS = 100; // how often to process a frame
+const FRAME_INTERVAL_MS = 100;     // how often to process a frame
+// A region's average brightness (max of R,G,B averaged across pixels) must
+// exceed this fraction of the pixel-entry threshold to be considered "on".
+// This rejects dim gray LED strips that are physically off.
+const REGION_AVG_BRIGHTNESS_RATIO = 0.90;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DOM refs
@@ -256,6 +260,16 @@ function processFrame() {
     const avgR = best.sumR / best.pixels;
     const avgG = best.sumG / best.pixels;
     const avgB = best.sumB / best.pixels;
+
+    // Reject regions whose average brightness is too close to the threshold —
+    // these are likely the unlit LED strip reflecting ambient light.
+    const avgBrightness = Math.max(avgR, avgG, avgB);
+    if (avgBrightness < brightnessThreshold * REGION_AVG_BRIGHTNESS_RATIO) {
+      ctx.drawImage(video, 0, 0, vw, vh);
+      resultPanel.classList.add('hidden');
+      return;
+    }
+
     const colorDef = classifyColor(avgR, avgG, avgB);
 
     // Draw bounding box
