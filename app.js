@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants & tunable defaults
 // ─────────────────────────────────────────────────────────────────────────────
-const APP_VERSION = 'v1.4';
+const APP_VERSION = 'v1.6';
 const FRAME_INTERVAL_MS = 100;     // how often to process a frame
 // A region's average brightness (max of R,G,B averaged across pixels) must
 // exceed this fraction of the pixel-entry threshold to be considered "on".
@@ -21,6 +21,8 @@ const threshSlider = document.getElementById('threshSlider');
 const threshVal    = document.getElementById('threshVal');
 const areaSlider   = document.getElementById('areaSlider');
 const areaVal      = document.getElementById('areaVal');
+const expSlider    = document.getElementById('expSlider');
+const expVal       = document.getElementById('expVal');
 const toggleBtn    = document.getElementById('toggleSettings');
 const showBtn      = document.getElementById('showSettings');
 const settingsPanel = document.getElementById('settings');
@@ -31,6 +33,30 @@ const zoomBadge    = document.getElementById('zoomBadge');
 // ─────────────────────────────────────────────────────────────────────────────
 let brightnessThreshold = parseInt(threshSlider.value, 10);
 let minAreaPx           = parseInt(areaSlider.value, 10);
+// exposureCompensation: 0 = no change, negative = darker
+// Stored as integer steps; actual EV range is queried from the camera track.
+let exposureSteps           = parseInt(expSlider.value, 10);
+let nativeExpMin            = null;
+let nativeExpMax            = null;
+
+// How long (ms) the result panel stays visible after the LED is no longer detected
+const RESULT_LINGER_MS = 1000;
+let hideResultTimer    = null;
+
+function scheduleHideResult() {
+  if (hideResultTimer !== null) return; // already scheduled
+  hideResultTimer = setTimeout(() => {
+    resultPanel.classList.add('hidden');
+    hideResultTimer = null;
+  }, RESULT_LINGER_MS);
+}
+
+function cancelHideResult() {
+  if (hideResultTimer !== null) {
+    clearTimeout(hideResultTimer);
+    hideResultTimer = null;
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Zoom state
@@ -60,6 +86,27 @@ function applyZoom(newZoom) {
   }
 }
 
+function applyExposure(steps) {
+  exposureSteps = steps;
+  expVal.textContent = steps === 0 ? '0' : (steps > 0 ? '+' + steps : String(steps));
+
+  if (!videoTrack) return;
+  const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+  if (!caps.exposureMode || !caps.exposureCompensation) return;
+
+  // Map slider steps (-5..0) linearly onto the camera's native EV range
+  if (nativeExpMin === null) {
+    nativeExpMin = caps.exposureCompensation.min;
+    nativeExpMax = caps.exposureCompensation.max;
+  }
+  const evRange = nativeExpMax - nativeExpMin;
+  const sliderRange = 10; // total slider span (-5 to +5)
+  const evValue = nativeExpMin + ((steps + 5) / sliderRange) * evRange;
+  videoTrack.applyConstraints({
+    advanced: [{ exposureMode: 'manual', exposureCompensation: evValue }]
+  }).catch(() => {});
+}
+
 threshSlider.addEventListener('input', () => {
   brightnessThreshold = parseInt(threshSlider.value, 10);
   threshVal.textContent = brightnessThreshold;
@@ -68,6 +115,10 @@ threshSlider.addEventListener('input', () => {
 areaSlider.addEventListener('input', () => {
   minAreaPx = parseInt(areaSlider.value, 10);
   areaVal.textContent = minAreaPx;
+});
+
+expSlider.addEventListener('input', () => {
+  applyExposure(parseInt(expSlider.value, 10));
 });
 
 toggleBtn.addEventListener('click', () => {
@@ -331,6 +382,17 @@ function processFrame() {
 
   // Draw the zoomed crop to offscreen at full canvas resolution for analysis
   offCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, vw, vh);
+
+  // Software exposure darkening: when native exposure is not available,
+  // or as a supplement, darken the frame by drawing a semi-transparent black
+  // overlay. Each step darkens by ~8% opacity. Negative steps = darken.
+  // This recovers color saturation from overexposed/clipped LEDs.
+  if (exposureSteps < 0) {
+    const darkenAlpha = Math.min(0.85, (-exposureSteps) * 0.12);
+    offCtx.fillStyle = `rgba(0,0,0,${darkenAlpha})`;
+    offCtx.fillRect(0, 0, vw, vh);
+  }
+
   const imageData = offCtx.getImageData(0, 0, vw, vh);
 
   // Find bright connected regions
@@ -342,8 +404,13 @@ function processFrame() {
     ? candidates.reduce((a, b) => (a.pixels > b.pixels ? a : b))
     : null;
 
-  // Draw the same zoomed crop to the visible canvas
+  // Draw the same zoomed crop to the visible canvas, then apply darkening
   ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, vw, vh);
+  if (exposureSteps < 0) {
+    const darkenAlpha = Math.min(0.85, (-exposureSteps) * 0.12);
+    ctx.fillStyle = `rgba(0,0,0,${darkenAlpha})`;
+    ctx.fillRect(0, 0, vw, vh);
+  }
 
   if (best) {
     const avgR = best.sumR / best.pixels;
@@ -354,7 +421,7 @@ function processFrame() {
     // these are likely the unlit LED strip reflecting ambient light.
     const avgBrightness = Math.max(avgR, avgG, avgB);
     if (avgBrightness < brightnessThreshold * REGION_AVG_BRIGHTNESS_RATIO) {
-      resultPanel.classList.add('hidden');
+      scheduleHideResult();
       return;
     }
 
@@ -368,11 +435,12 @@ function processFrame() {
     ctx.strokeRect(best.minX, best.minY, boxW, boxH);
 
     // Update the result panel
+    cancelHideResult();
     swatchEl.style.backgroundColor = colorDef.css;
     colorNameEl.textContent         = colorDef.name;
     resultPanel.classList.remove('hidden');
   } else {
-    resultPanel.classList.add('hidden');
+    scheduleHideResult();
   }
 }
 
