@@ -197,8 +197,9 @@ const COLOR_DEFS = [
 function classifyColor(r, g, b) {
   const { h, s, v } = rgbToHsv(r, g, b);
 
-  // Low saturation → white (or very dim — but those shouldn't reach this function)
-  if (s < 0.25 || v > 0.95 && s < 0.35) {
+  // Low saturation → white. Thresholds are intentionally tight so that
+  // washed-out yellows (which can have s ~0.20) still reach the hue classifier.
+  if (s < 0.12 || (v > 0.95 && s < 0.18)) {
     return COLOR_DEFS[0]; // White
   }
 
