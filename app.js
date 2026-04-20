@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants & tunable defaults
 // ─────────────────────────────────────────────────────────────────────────────
-const APP_VERSION = 'v1.3';
+const APP_VERSION = 'v1.4';
 const FRAME_INTERVAL_MS = 100;     // how often to process a frame
 // A region's average brightness (max of R,G,B averaged across pixels) must
 // exceed this fraction of the pixel-entry threshold to be considered "on".
