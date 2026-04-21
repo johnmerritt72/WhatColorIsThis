@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants & tunable defaults
 // ─────────────────────────────────────────────────────────────────────────────
-const APP_VERSION = 'v1.10';
+const APP_VERSION = 'v1.11';
 const FRAME_INTERVAL_MS = 100;     // how often to process a frame
 // A region's average brightness (max of R,G,B averaged across pixels) must
 // exceed this fraction of the pixel-entry threshold to be considered "on".
@@ -39,6 +39,7 @@ let minAreaPx           = parseInt(areaSlider.value, 10);
 let exposureSteps           = parseInt(expSlider.value, 10);
 let nativeExpMin            = null;
 let nativeExpMax            = null;
+let nativeExpSupported      = false; // true once we confirm native exposure works
 let detectWhite             = whiteChk.checked; // false by default
 
 whiteChk.addEventListener('change', () => { detectWhite = whiteChk.checked; });
@@ -98,17 +99,21 @@ function applyExposure(steps) {
   const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
   if (!caps.exposureMode || !caps.exposureCompensation) return;
 
-  // Map slider steps (-5..0) linearly onto the camera's native EV range
+  // Map slider steps (-5..+5) linearly onto the camera's native EV range
   if (nativeExpMin === null) {
     nativeExpMin = caps.exposureCompensation.min;
     nativeExpMax = caps.exposureCompensation.max;
   }
-  const evRange = nativeExpMax - nativeExpMin;
-  const sliderRange = 10; // total slider span (-5 to +5)
-  const evValue = nativeExpMin + ((steps + 5) / sliderRange) * evRange;
+  const evRange    = nativeExpMax - nativeExpMin;
+  const sliderRange = 10;
+  const evValue    = nativeExpMin + ((steps + 5) / sliderRange) * evRange;
   videoTrack.applyConstraints({
     advanced: [{ exposureMode: 'manual', exposureCompensation: evValue }]
-  }).catch(() => {});
+  }).then(() => {
+    nativeExpSupported = true; // confirmed working — disable canvas darkening
+  }).catch(() => {
+    nativeExpSupported = false;
+  });
 }
 
 threshSlider.addEventListener('input', () => {
@@ -412,11 +417,10 @@ function processFrame() {
   // Draw the zoomed crop to offscreen at full canvas resolution for analysis
   offCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, vw, vh);
 
-  // Software exposure darkening: when native exposure is not available,
-  // or as a supplement, darken the frame by drawing a semi-transparent black
-  // overlay. Each step darkens by ~8% opacity. Negative steps = darken.
-  // This recovers color saturation from overexposed/clipped LEDs.
-  if (exposureSteps < 0) {
+  // Software exposure darkening: only used when native camera exposure is NOT
+  // available (canvas-only fallback). When native exposure is active we skip
+  // this to avoid double-darkening the image.
+  if (exposureSteps < 0 && !nativeExpSupported) {
     const darkenAlpha = Math.min(0.85, (-exposureSteps) * 0.12);
     offCtx.fillStyle = `rgba(0,0,0,${darkenAlpha})`;
     offCtx.fillRect(0, 0, vw, vh);
@@ -434,8 +438,9 @@ function processFrame() {
     : null;
 
   // Draw the same zoomed crop to the visible canvas, then apply darkening
+  // only if native exposure is not active (avoid double-darkening).
   ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, vw, vh);
-  if (exposureSteps < 0) {
+  if (exposureSteps < 0 && !nativeExpSupported) {
     const darkenAlpha = Math.min(0.85, (-exposureSteps) * 0.12);
     ctx.fillStyle = `rgba(0,0,0,${darkenAlpha})`;
     ctx.fillRect(0, 0, vw, vh);
@@ -490,9 +495,10 @@ function processFrame() {
 // Boot
 // ─────────────────────────────────────────────────────────────────────────────
 startCamera().then(() => {
-  // Apply default exposure immediately so native camera constraint
-  // and canvas darkening both take effect before the first slider move.
-  applyExposure(exposureSteps);
+  // Delay initial exposure application by 2 s so the camera's auto-exposure
+  // algorithm can settle first. Applying manual constraints immediately would
+  // lock in a bad starting point before the sensor has adjusted to the scene.
+  setTimeout(() => applyExposure(exposureSteps), 2000);
   setInterval(processFrame, FRAME_INTERVAL_MS);
 });
 
