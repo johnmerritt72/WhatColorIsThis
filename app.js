@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants & tunable defaults
 // ─────────────────────────────────────────────────────────────────────────────
-const APP_VERSION = 'v1.9';
+const APP_VERSION = 'v1.10';
 const FRAME_INTERVAL_MS = 100;     // how often to process a frame
 // A region's average brightness (max of R,G,B averaged across pixels) must
 // exceed this fraction of the pixel-entry threshold to be considered "on".
@@ -490,6 +490,9 @@ function processFrame() {
 // Boot
 // ─────────────────────────────────────────────────────────────────────────────
 startCamera().then(() => {
+  // Apply default exposure immediately so native camera constraint
+  // and canvas darkening both take effect before the first slider move.
+  applyExposure(exposureSteps);
   setInterval(processFrame, FRAME_INTERVAL_MS);
 });
 
