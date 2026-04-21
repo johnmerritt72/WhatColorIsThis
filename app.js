@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants & tunable defaults
 // ─────────────────────────────────────────────────────────────────────────────
-const APP_VERSION = 'v1.6';
+const APP_VERSION = 'v1.8';
 const FRAME_INTERVAL_MS = 100;     // how often to process a frame
 // A region's average brightness (max of R,G,B averaged across pixels) must
 // exceed this fraction of the pixel-entry threshold to be considered "on".
@@ -23,6 +23,7 @@ const areaSlider   = document.getElementById('areaSlider');
 const areaVal      = document.getElementById('areaVal');
 const expSlider    = document.getElementById('expSlider');
 const expVal       = document.getElementById('expVal');
+const whiteChk     = document.getElementById('whiteChk');
 const toggleBtn    = document.getElementById('toggleSettings');
 const showBtn      = document.getElementById('showSettings');
 const settingsPanel = document.getElementById('settings');
@@ -38,6 +39,9 @@ let minAreaPx           = parseInt(areaSlider.value, 10);
 let exposureSteps           = parseInt(expSlider.value, 10);
 let nativeExpMin            = null;
 let nativeExpMax            = null;
+let detectWhite             = whiteChk.checked; // false by default
+
+whiteChk.addEventListener('change', () => { detectWhite = whiteChk.checked; });
 
 // How long (ms) the result panel stays visible after the LED is no longer detected
 const RESULT_LINGER_MS = 1000;
@@ -248,10 +252,10 @@ const COLOR_DEFS = [
 function classifyColor(r, g, b) {
   const { h, s, v } = rgbToHsv(r, g, b);
 
-  // Low saturation → white. Thresholds are intentionally tight so that
-  // washed-out yellows (which can have s ~0.20) still reach the hue classifier.
+  // Low saturation → white. Return null if white detection is disabled
+  // so the caller can treat this as "no color found".
   if (s < 0.12 || (v > 0.95 && s < 0.18)) {
-    return COLOR_DEFS[0]; // White
+    return detectWhite ? COLOR_DEFS[0] : null;
   }
 
   // Hue-based classification
@@ -265,7 +269,13 @@ function classifyColor(r, g, b) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Connected-components (union-find on a 1-D bright-pixel mask)
-// Returns array of { minX, maxX, minY, maxY, pixels: count, sumR, sumG, sumB }
+// Returns array of:
+//   { minX, maxX, minY, maxY, pixels, sumR, sumG, sumB,
+//     rimPixels, rimSumR, rimSumG, rimSumB }
+// "rim" pixels are those whose own per-pixel HSV saturation >= RIM_SAT_MIN.
+// These are the colorful edges of the light; the blown-out centre pixels
+// (near-white, low saturation) are excluded from the rim sums.
+const RIM_SAT_MIN = 0.20; // pixels below this saturation are considered blown-out
 // ─────────────────────────────────────────────────────────────────────────────
 function findBrightRegions(imageData, width, height, threshold) {
   const data   = imageData.data;
@@ -328,14 +338,33 @@ function findBrightRegions(imageData, width, height, threshold) {
 
       const root = find(labels[pixIdx]);
       if (!regions.has(root)) {
-        regions.set(root, { minX: x, maxX: x, minY: y, maxY: y, pixels: 0, sumR: 0, sumG: 0, sumB: 0 });
+        regions.set(root, {
+          minX: x, maxX: x, minY: y, maxY: y,
+          pixels: 0, sumR: 0, sumG: 0, sumB: 0,
+          rimPixels: 0, rimSumR: 0, rimSumG: 0, rimSumB: 0,
+        });
       }
       const reg = regions.get(root);
       const idx = (y * width + x) * 4;
+      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+
       reg.pixels++;
-      reg.sumR += data[idx];
-      reg.sumG += data[idx + 1];
-      reg.sumB += data[idx + 2];
+      reg.sumR += r;
+      reg.sumG += g;
+      reg.sumB += b;
+
+      // Classify this pixel as a rim (colorful edge) pixel if it has
+      // meaningful saturation — i.e. it is NOT blown-out near-white.
+      const maxC = Math.max(r, g, b);
+      const minC = Math.min(r, g, b);
+      const pixSat = maxC === 0 ? 0 : (maxC - minC) / maxC;
+      if (pixSat >= RIM_SAT_MIN) {
+        reg.rimPixels++;
+        reg.rimSumR += r;
+        reg.rimSumG += g;
+        reg.rimSumB += b;
+      }
+
       if (x < reg.minX) reg.minX = x;
       if (x > reg.maxX) reg.maxX = x;
       if (y < reg.minY) reg.minY = y;
@@ -425,7 +454,20 @@ function processFrame() {
       return;
     }
 
-    const colorDef = classifyColor(avgR, avgG, avgB);
+    // Prefer rim (colorful edge) pixels for classification; they are not
+    // blown-out and carry the true hue. Fall back to all-pixel average
+    // only if too few rim pixels were found (< 5% of region or < 10 px).
+    const useRim = best.rimPixels >= 10 && best.rimPixels >= best.pixels * 0.05;
+    const sampleR = useRim ? best.rimSumR / best.rimPixels : avgR;
+    const sampleG = useRim ? best.rimSumG / best.rimPixels : avgG;
+    const sampleB = useRim ? best.rimSumB / best.rimPixels : avgB;
+
+    const colorDef = classifyColor(sampleR, sampleG, sampleB);
+    if (!colorDef) {
+      // White detection disabled and result would be white — treat as no detection
+      scheduleHideResult();
+      return;
+    }
 
     // Draw bounding box
     const boxW = best.maxX - best.minX + 1;
